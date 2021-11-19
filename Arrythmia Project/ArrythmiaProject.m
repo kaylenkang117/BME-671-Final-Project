@@ -10,8 +10,9 @@ load([int2str(file), 'm.mat']);
 [tm, signal, Fs, labels] = rdmat([int2str(file), 'm']);
 signal = signal(:,1);
 
-% filter    *****change this filter*****
-signal = highpass(signal,1,360);
+%% filter
+filter = ones(1,10);
+signal = conv(signal,filter);
 
 %% analysis
 figure(1)
