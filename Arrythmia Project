@@ -1,70 +1,109 @@
 % SPAM Final Project
+% Kaylen Kang, Ruby Kang, Leslie Xu
 
-%%
-file = 100  ;
+%% Raw MIT-BIH ECG data file input  
+file = 100  ; % change file number for different patients
 
-%% ECG graph
-
+%% CONVERT FILE to .mat file
+% MIT-BIH data from physionet.org came in wfdb format that contained a lot of different information, including annotations
+% wfdb2mat converts to obtain the information about the actual ECG waveforms
 wfdb2mat(int2str(file));  % convert .dat file to .mat file
 load([int2str(file), 'm.mat']);
-[tm, signal, Fs, labels] = rdmat([int2str(file), 'm']);
+[tm, signal, Fs, labels] = rdmat([int2str(file), 'm']); % contains time (tm), ECG signal, and sampling frequency (Fs)
+% Set variable name for the ECG signal
 signal = signal(:,1);
 
-%% filter
-filter = ones(1,10);
+%% FILTERING:
+% Convolved the signal with a large low pass filter to remove high frequency noise
+% This made the signal cleaner, so it's easier for the code to identify the different peaks and complexes of the ECG waveform later on
+filter = ones(1,10); % low pass filter
 signal = conv(signal,filter);
 
-%% analysis
+%% ANALYSIS:
+% The two main components of the waveform we identified were to R peaks of the QRS complex and the P wave.
+% With these two components, we created an algorithm that would look at heartrate, abnormal P waves (extra wave or inversion), R peak inversion, or broad QRS complex
+% to diagnose patients based on what conditions they have.
+
 figure(1)
+% first normalized the signal so its centered about zero magnitude, because some of the datasets were shifted slightly up or down
 avg = mean(signal);
 signal = signal-avg;
 
-brady = []; tachy = []; pre = []; supra = [];
-R_inversion = 0;
-P_inversion = 0;
+brady = []; tachy = []; pre = []; supra = []; % initialized matrices for each arrhythmia type
+R_inversion = 0; % initialized logical for R peak inversion
+P_inversion = 0; % initialized logical for P waves inversion
+
+% The for loop goes through the entire length of the signal but divided into smaller parts.
+% It will count instances of each type of condition and at the end, based on the number of instances, it will give a diagnosis.
+% So it is possible to get more than one type of arrhythmia diagnosed, which some of the MIT-BIH datasets did have according to the annotations.
 for i = 1:129
-    T = tm(i*5000:(i+1)*5000); SIGNAL = signal(i*5000:(i+1)*5000);
+    T = tm(i*5000:(i+1)*5000); SIGNAL = signal(i*5000:(i+1)*5000); % truncated signal segment
+    
+    % Used the built-in MATLAB function findpeaks(), which finds local maxima, to locate the R peaks
+    % Thresholded the distance between two peaks and the minimum height of the peaks to make sure it only identifies R peaks and not other complexes
     [Rpeaks,pos_peaks] = findpeaks(SIGNAL,'MINPEAKDISTANCE',150,'MINPEAKHEIGHT',.5);
-    % R peaks
-    if length(Rpeaks) < 4
-        [Rpeaks,pos_peaks] = findpeaks(-SIGNAL,'MINPEAKDISTANCE',150,'MINPEAKHEIGHT',max(-SIGNAL)/2);
-        Rpeaks = -Rpeaks;
-        R_inversion = 1;
+    
+    % Conditional for identifying R peak inversion
+    if length(Rpeaks) < 4 % If the findpeaks() function could not find many peaks with the thresholds from above, most likely means the peaks are inverted
+        [Rpeaks,pos_peaks] = findpeaks(-SIGNAL,'MINPEAKDISTANCE',150,'MINPEAKHEIGHT',max(-SIGNAL)/2); % flips the signal and then finds R peaks  
+        Rpeaks = -Rpeaks; % Sets new Rpeaks value
+        R_inversion = 1; % Sets R inversion logical to TRUE
     end
-    % P wave peaks 
+    
+    % Conditional for indentifying P wave inversion
+    % Use the same findpeaks() function to find P wave peaks by setting lower thresholds to pick up the smaller wave
+    % So this Ppeaks value technically includes Rpeaks too
     [Ppeaks,pos_Ppeaks] = findpeaks(SIGNAL,'MINPEAKDISTANCE',50,'MINPEAKHEIGHT',0.2);
+    
+    % Since they are periodic, theoretically there should be one P wave for every R peak, so if you subtract the length of Rpeaks from the length of Ppeaks
+    % it should be equal to the number of R peaks.
     if (length(Ppeaks)-length(Rpeaks)+1) ~= length(Rpeaks)
         [Ppeaks,pos_Ppeaks] = findpeaks(SIGNAL,'MINPEAKDISTANCE',50,'MINPEAKHEIGHT',0.05);
+    % But if this is not the case, it most likely means the P waves are inverted since the findpeaks() did not pick up on enough P waves    
     elseif length(Ppeaks)/2<length(Rpeaks)
-        [Ppeaks,pos_Ppeaks] = findpeaks(-SIGNAL,'minpeakdistance',100,'minpeakheight',max(-SIGNAL)/3);
-        P_inversion = 1;
+        [Ppeaks,pos_Ppeaks] = findpeaks(-SIGNAL,'minpeakdistance',100,'minpeakheight',max(-SIGNAL)/3); % flip the signal and find the P waves + R peaks
+        P_inversion = 1; % Set P wave inversion to TRUE
     end
+    
+    % Real number of P waves in the sample
     num_P = (length(Ppeaks)-length(Rpeaks))-1;
-    % Heartrate   
+    
+    % Heartrate using R peaks
     heartrate = length(Rpeaks)/14*60;
-    % RR intervals
+    
+    % Determining irregularities between R peaks 
     RR_intervals = [];
+    % Finds the distances between each R peak
     for i = 1:length(Rpeaks)-1
         t = (pos_peaks(i+1)-pos_peaks(i))/Fs;
         RR_intervals = [RR_intervals t];
     end
+    % Get the standard deviation of the distances
+    % Normal ECG waveforms would have very low standard deviation because their heartrates are steady, but larger deviations would mean irregularities 
     RR_std = std(RR_intervals);
+    
     % Diagnosis
+    % if their heartrate is lower than 55 bpm, they most likely have bradycardia
     if heartrate<55
         brady = [brady i];
     end
+    % if their heartrate is greater than 95 bpm AND they have P wave inversion, they most likely have tachycardia
     if heartrate>95 && P_inversion == false
         tachy = [tachy i];
     end
+    % if their heart rate is over 95 bpm AND they either have P wave inversion OR R peak inversion, they most likely have supraventricular tachycardia
     if heartrate>95 && (P_inversion == true || R_inversion == true)
         supra = [supra i];
     end
+    % if they have more P waves than R peaks OR their R peak intervals have a standard deviation greater than 0.05 OR they have P wave inversion OR R peak inversion,
+    % they most likely have premature or extra heart beat
     if num_P>length(Rpeaks) || RR_std>0.05 || P_inversion == true || R_inversion == true
         pre = [pre i];
     end
 end
 
-% ECG plot
+%% ECG PLOT: 
+% plots sample ECG dataset with the R peaks and P waves marked
 % R peaks
 t = tm(1:5000); signal = signal(1:5000); 
 [Rpeaks,pos_peaks] = findpeaks(signal,'MINPEAKDISTANCE',150,'MINPEAKHEIGHT',.5);
@@ -88,32 +127,27 @@ subplot(2,1,1)
 plot(t,signal,pos_peaks/Fs,Rpeaks,'ro',pos_Ppeaks/Fs,Ppeaks,'r*')
 xlabel('time (sec)'); ylabel('amplitude (mV)');
 title(['Record I from Lead ', labels(1).Description]); xlim([0 10]);
-% frequency domain plot
-subplot(2,1,2)
-freq = -length(signal)/2:(length(signal)-1)/2;
-plot(freq,abs(fft(signal)))
 
-%% DIAGNOSIS and SUGGESTED TREATMENTS:
+
+%% DIAGNOSIS:
+% outputs patients heartrate and what type of arrythmia they might have
 disp("Patient's heartrate:")
 disp(heartrate)
-% bradyarrhythmia
+% bradyarrhythmia: more than 40 instances of micro-bradycardia diagnoses throughout
 if length(brady)>40
     disp("Patient's heart rate is below the healthy limit of 60 bpm, which indicates BRADYARRHYTHMIA. ")
-
 end
-% tachycardia
+% tachycardia: more than 3 instances of micro-tachycardia diagnoses throughout
 if length(tachy)>3
     disp("Patient's heart rate is above the healthy limit of 100 bpm, which indicates VENTRICULAR ")
     disp('ARRHYTHMIA (TACHYCARDIA).')
 end
-
-% supraventricular arrythmia
+% supraventricular arrythmia: 1 or more instaces of micro-supraventricular tachycardia throughout
 if length(supra)>0
     disp("Patient's heart rate is above the healthy limit of 100 bpm and has P wave inversion, ")
     disp('which indicates SUPRAVENTRICULAR ARRYTHMIA.')
 end
-
-% premature or extra beat
+% premature or extra beat: more than 2 instances of micro-premature/extra heartbeat throughout
 if length(pre)>2
     disp("Patient has an abnormal P wave (double hump or inverted) or a broad QRS complex, which ")
     disp('indicates PREMATURE OR EXTRA BEAT.')
