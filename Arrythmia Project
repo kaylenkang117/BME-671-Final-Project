@@ -6,7 +6,7 @@ file = 100  ; % change file number for different patients
 
 %% CONVERT FILE to .mat file
 % MIT-BIH data from physionet.org came in wfdb format that contained a lot of different information, including annotations
-% wfdb2mat converts to obtain the information about the actual ECG waveforms
+% wfdb2mat converts using a MATLAB WFDB toolbox to obtain the information about the actual ECG waveforms
 wfdb2mat(int2str(file));  % convert .dat file to .mat file
 load([int2str(file), 'm.mat']);
 [tm, signal, Fs, labels] = rdmat([int2str(file), 'm']); % contains time (tm), ECG signal, and sampling frequency (Fs)
